@@ -1,16 +1,23 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <title>soundKILL</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
 
   <body>
     <label for="audio_file_select_INPUT">Carica il file audio:</label>
-    <input id="audio_file_select_INPUT" type="file" accept="audio/*">
+    <input id="audio_file_select_INPUT" type="file" accept="audio/*" />
     <button id="audio_file_deselect_INPUT">Deseleziona il file</button>
 
-    <br>
+    <br />
     <button id="activate_mic_input_BUTTON">Attiva input microfono</button>
+
+    <div id="analysers_DIV">
+      <canvas id="amplitude_analyser_CANVAS"></canvas>
+      <canvas id="frequency_analyser_CANVAS"></canvas>
+      <canvas id="volume_analyzer_CANVAS"></canvas>
+    </div>
 
     <script src="./js/main.js"></script>
   </body>
