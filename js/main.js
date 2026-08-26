@@ -8,6 +8,7 @@ const audio_file_deselect_INPUT = document.getElementById(
 const activate_mic_input_BUTTON = document.getElementById(
   "activate_mic_input_BUTTON",
 );
+const current_frequency_P = document.getElementById("current_frequency_P");
 
 const audioContext = new AudioContext();
 const analyserNode = audioContext.createAnalyser();
@@ -112,7 +113,7 @@ activate_mic_input_BUTTON.addEventListener("click", async (event) => {
   }
 });
 
-// ===== ANALYSER SIZING (condiviso tra waveform e spettro) =====
+// ===== ANALYSERS SIZING =====
 
 const amplitude_analyser_CANVAS = document.getElementById(
   "amplitude_analyser_CANVAS",
@@ -123,10 +124,14 @@ const frequency_analyser_CANVAS = document.getElementById(
 const volume_analyzer_CANVAS = document.getElementById(
   "volume_analyzer_CANVAS",
 );
+const frequency_history_CANVAS = document.getElementById(
+  "frequency_history_CANVAS",
+);
 
 const analyserCanvasCtx = amplitude_analyser_CANVAS.getContext("2d");
 const frequencyCanvasCtx = frequency_analyser_CANVAS.getContext("2d");
 const volumeCanvasCtx = volume_analyzer_CANVAS.getContext("2d");
+const pitchChartCanvasCtx = frequency_history_CANVAS.getContext("2d");
 
 let timeDataArray = new Uint8Array(analyserNode.fftSize);
 let frequencyDataArray = new Uint8Array(analyserNode.frequencyBinCount);
@@ -153,6 +158,9 @@ function resizeAnalyserCanvases() {
 
 window.addEventListener("resize", resizeAnalyserCanvases);
 resizeAnalyserCanvases(); // chiamata iniziale, subito all'avvio
+
+let lastPitchValues = new Array(100).fill(null);
+let currentFrequency = null;
 
 function drawAnalysersCanvas() {
   // ===== AMPLITUDE ANALYSER =====
@@ -235,7 +243,102 @@ function drawAnalysersCanvas() {
     volume_analyzer_CANVAS.height,
   );
 
+  // ===== PITCH ANALYSER =====
+  // Every audio input is resampled by the browser to match the
+  // audio context sample rate.
+  const sampleRate = audioContext.sampleRate;
+  const lagBottomLimit = Math.round(sampleRate / 1000);
+  const lagTopLimit = Math.round(sampleRate / 80);
+  let highestCorrLag = 0; // The lag with highest correlation
+  let currentLagCorr = 0;
+  let currentLagCorrMean;
+  let currentLagCorrMeanScaled;
+  let currentMaxCorr = 0; // "lag = 0"'s correlation, the highest possible
+  let currentMaxCorrMean;
+
+  {
+    let i;
+    for (i = 0; i < timeDataArray.length; i++) {
+      currentMaxCorr += Math.pow(timeDataArray[i] - 128, 2);
+    }
+
+    currentMaxCorrMean = currentMaxCorr / (i - 1);
+  }
+
+  // Trova la prima lag (scostamento) con correlazione (scalata) maggiore
+  // moltiplicando i punti dell'onda con quelli dell'onda
+  // stessa shiftata di "lag" campioni.
+  for (let lag = lagBottomLimit; lag <= lagTopLimit; lag++) {
+    let i;
+    for (i = 0; i + lag < timeDataArray.length; i++) {
+      currentLagCorr +=
+        (timeDataArray[i] - 128) * (timeDataArray[i + lag] - 128);
+    }
+
+    currentLagCorrMean = currentLagCorr / (i - 1);
+    currentLagCorrMeanScaled = currentLagCorrMean / currentMaxCorrMean;
+
+    if (currentLagCorrMeanScaled > 0.9) {
+      highestCorrLag = lag;
+      break;
+    }
+
+    currentLagCorr = 0;
+  }
+
+  // Calcola la frequenza corrispondente al lag con maggiore correlazione
+  // (la frequenza della nota che sta venendo suonata nel timeDataArray)
+  currentFrequency = highestCorrLag === 0 ? null : sampleRate / highestCorrLag;
+  current_frequency_P.innerHTML =
+    currentFrequency === null ? "-----" : currentFrequency.toFixed(2);
+
   requestAnimationFrame(drawAnalysersCanvas);
 }
+
+const pitchData = {
+  labels: [],
+  datasets: [
+    {
+      label: "Real-time pitch",
+      data: lastPitchValues,
+      borderColor: "rgb(0, 0, 0)",
+      spanGaps: false,
+    },
+  ],
+};
+
+for (let i = 0; i < lastPitchValues.length; i++) {
+  if (i % 10 === 0) {
+    pitchData.labels.push(-(100 - i) / 10);
+  } else {
+    pitchData.labels.push("");
+  }
+}
+
+const pitchChart = new Chart(pitchChartCanvasCtx, {
+  type: "line",
+  data: pitchData,
+  options: {
+    scales: {
+      y: {
+        min: 80,
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+  },
+});
+
+const updatePitchAnalyser = () => {
+  pitchChart.data.datasets[0].data.push(currentFrequency);
+  pitchChart.data.datasets[0].data.shift();
+};
+
+const intervalId = setInterval(updatePitchAnalyser, 100);
+const pitchChartUpdateVisualIntervalId = setInterval(
+  () => pitchChart.update(),
+  1000,
+);
 
 requestAnimationFrame(drawAnalysersCanvas);
