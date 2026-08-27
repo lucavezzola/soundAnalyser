@@ -8,6 +8,9 @@ const audio_file_deselect_INPUT = document.getElementById(
 const activate_mic_input_BUTTON = document.getElementById(
   "activate_mic_input_BUTTON",
 );
+const spectrometer_log_BUTTON = document.getElementById(
+  "spectrometer_log_BUTTON",
+);
 const current_frequency_P = document.getElementById("current_frequency_P");
 
 const audioContext = new AudioContext();
@@ -113,6 +116,19 @@ activate_mic_input_BUTTON.addEventListener("click", async (event) => {
   }
 });
 
+let spectrometerLogScale = false;
+spectrometer_log_BUTTON.classList.add("inactive");
+
+spectrometer_log_BUTTON.addEventListener("click", (event) => {
+  spectrometerLogScale = !spectrometerLogScale;
+
+  if (!spectrometerLogScale) {
+    spectrometer_log_BUTTON.classList.add("inactive");
+  } else {
+    spectrometer_log_BUTTON.classList.remove("inactive");
+  }
+});
+
 // ===== ANALYSERS SIZING =====
 
 const amplitude_analyser_CANVAS = document.getElementById(
@@ -121,6 +137,7 @@ const amplitude_analyser_CANVAS = document.getElementById(
 const frequency_analyser_CANVAS = document.getElementById(
   "frequency_analyser_CANVAS",
 );
+const spectrometer_CANVAS = document.getElementById("spectrometer_CANVAS");
 const volume_analyzer_CANVAS = document.getElementById(
   "volume_analyzer_CANVAS",
 );
@@ -130,6 +147,7 @@ const frequency_history_CANVAS = document.getElementById(
 
 const analyserCanvasCtx = amplitude_analyser_CANVAS.getContext("2d");
 const frequencyCanvasCtx = frequency_analyser_CANVAS.getContext("2d");
+const spectrometerCanvasCtx = spectrometer_CANVAS.getContext("2d");
 const volumeCanvasCtx = volume_analyzer_CANVAS.getContext("2d");
 const pitchChartCanvasCtx = frequency_history_CANVAS.getContext("2d");
 
@@ -148,6 +166,9 @@ function resizeAnalyserCanvases() {
   frequency_analyser_CANVAS.width = targetWidth;
   frequency_analyser_CANVAS.height = 256;
 
+  spectrometer_CANVAS.width = targetWidth;
+  spectrometer_CANVAS.height = 500;
+
   volume_analyzer_CANVAS.width = targetWidth;
   volume_analyzer_CANVAS.height = 20;
 
@@ -161,6 +182,15 @@ resizeAnalyserCanvases(); // chiamata iniziale, subito all'avvio
 
 let lastPitchValues = new Array(100).fill(null);
 let currentFrequency = null;
+const minFreq = 20;
+// Every audio input is resampled by the browser to match the
+// audio context sample rate.
+const sampleRate = audioContext.sampleRate;
+const maxFreq = sampleRate / 2;
+const minBrightness = 0.25;
+const maxBrightness = 0.45;
+
+const spectrometerDrawShift = 1;
 
 function drawAnalysersCanvas() {
   // ===== AMPLITUDE ANALYSER =====
@@ -204,7 +234,12 @@ function drawAnalysersCanvas() {
   frequencyCanvasCtx.fillStyle = "steelblue";
 
   for (let x = 0; x < frequency_analyser_CANVAS.width; x++) {
-    const value = frequencyDataArray[Math.floor(x * frequencyDataRatio)];
+    const ratio = x / frequency_analyser_CANVAS.width;
+    const xFrequency = minFreq * Math.pow(maxFreq / minFreq, ratio);
+    const binIndex = Math.round(
+      (xFrequency * analyserNode.frequencyBinCount) / maxFreq,
+    );
+    const value = frequencyDataArray[binIndex];
     const barHeight = (value / 255) * frequency_analyser_CANVAS.height;
 
     frequencyCanvasCtx.fillRect(
@@ -213,6 +248,65 @@ function drawAnalysersCanvas() {
       1,
       barHeight, // altezza della barra
     );
+  }
+
+  // ===== SPECTROMETER =====
+  let pixelHue;
+  let pixelBrightness;
+
+  if (spectrometerLogScale) {
+    spectrometerCanvasCtx.drawImage(
+      spectrometer_CANVAS,
+      -spectrometerDrawShift,
+      0,
+    );
+
+    let ratio;
+    let yFrequency;
+    let binIndex;
+
+    for (let y = 0; y < spectrometer_CANVAS.height; y++) {
+      ratio = y / spectrometer_CANVAS.height;
+      yFrequency = minFreq * Math.pow(maxFreq / minFreq, ratio);
+      binIndex = Math.round(
+        (yFrequency * analyserNode.frequencyBinCount) / maxFreq,
+      );
+
+      pixelHue = 270 - (270 * frequencyDataArray[binIndex]) / 255;
+      pixelBrightness =
+        (frequencyDataArray[binIndex] * (maxBrightness - minBrightness)) / 255 +
+        minBrightness;
+
+      spectrometerCanvasCtx.fillStyle = `hsl(${pixelHue}, 100%, ${pixelBrightness * 100}%)`;
+
+      spectrometerCanvasCtx.fillRect(
+        spectrometer_CANVAS.width - spectrometerDrawShift,
+        spectrometer_CANVAS.height - 1 - y, // Canva's y axix goes down, not up
+        spectrometerDrawShift,
+        1,
+      );
+    }
+  } else {
+    spectrometerCanvasCtx.drawImage(spectrometer_CANVAS, -1, 0);
+
+    for (let y = 0; y < spectrometer_CANVAS.height; y++) {
+      binIndex = Math.round(
+        (frequencyDataArray.length / spectrometer_CANVAS.height) * y,
+      );
+      pixelHue = 270 - (270 * frequencyDataArray[binIndex]) / 255;
+      pixelBrightness =
+        (frequencyDataArray[binIndex] * (maxBrightness - minBrightness)) / 255 +
+        minBrightness;
+
+      spectrometerCanvasCtx.fillStyle = `hsl(${pixelHue}, 100%, ${pixelBrightness * 100}%)`;
+
+      spectrometerCanvasCtx.fillRect(
+        spectrometer_CANVAS.width - 1,
+        spectrometer_CANVAS.height - 1 - y, // Canva's y axix goes down, not up
+        1,
+        1,
+      );
+    }
   }
 
   // ===== VOLUME ANALYSER =====
@@ -244,9 +338,6 @@ function drawAnalysersCanvas() {
   );
 
   // ===== PITCH ANALYSER =====
-  // Every audio input is resampled by the browser to match the
-  // audio context sample rate.
-  const sampleRate = audioContext.sampleRate;
   const lagBottomLimit = Math.round(sampleRate / 1000);
   const lagTopLimit = Math.round(sampleRate / 80);
   let highestCorrLag = 0; // The lag with highest correlation
@@ -295,6 +386,7 @@ function drawAnalysersCanvas() {
   requestAnimationFrame(drawAnalysersCanvas);
 }
 
+//  ===== PITCH VISUALIZER =====
 const pitchData = {
   labels: [],
   datasets: [
@@ -321,7 +413,9 @@ const pitchChart = new Chart(pitchChartCanvasCtx, {
   options: {
     scales: {
       y: {
+        type: "logarithmic",
         min: 80,
+        max: 1500,
       },
     },
     responsive: true,
@@ -338,7 +432,7 @@ const updatePitchAnalyser = () => {
 const intervalId = setInterval(updatePitchAnalyser, 100);
 const pitchChartUpdateVisualIntervalId = setInterval(
   () => pitchChart.update(),
-  1000,
+  10,
 );
 
 requestAnimationFrame(drawAnalysersCanvas);
